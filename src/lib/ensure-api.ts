@@ -15,8 +15,9 @@ import type {
   UpdateCustomerInput,
   VipCustomer,
 } from '../types/api'
-import { normalizePin, normalizePhone, parseAsciiDigits } from './normalize'
+import { normalizePin, normalizePhone } from './normalize'
 import { settleOrder } from './order'
+import { matchesCustomerSearch } from './search'
 
 const KEYS = {
   settings: 'cc_settings',
@@ -194,10 +195,7 @@ export function createDevApi(): ElectronAPI {
         let customers = getCustomers()
 
         if (search) {
-          const q = search.toLowerCase()
-          customers = customers.filter(
-            (c) => c.fullName.toLowerCase().includes(q) || c.phone.includes(parseAsciiDigits(search)),
-          )
+          customers = customers.filter((c) => matchesCustomerSearch(c, search))
         }
 
         if (vipOnly) {
@@ -383,11 +381,8 @@ export function createDevApi(): ElectronAPI {
         }
 
         if (search) {
-          const q = search.toLowerCase()
           transactions = transactions.filter(
-            (t) =>
-              t.customer?.fullName.toLowerCase().includes(q) ||
-              t.customer?.phone.includes(parseAsciiDigits(search)),
+            (t) => t.customer && matchesCustomerSearch(t.customer, search),
           )
         }
 

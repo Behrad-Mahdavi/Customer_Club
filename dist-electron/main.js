@@ -185,6 +185,22 @@ function normalizePhone(phone) {
   }
   return digits.slice(0, 11);
 }
+function normalizePersianText(value) {
+  return normalizeDigits(value).replace(/\u064A/g, "ی").replace(/\u0643/g, "ک").replace(/\u0629/g, "ه").replace(/\u200C/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+function splitSearchQuery(search) {
+  const trimmed = search.trim();
+  const phoneDigits = parseAsciiDigits(trimmed);
+  const nameQuery = normalizePersianText(normalizeDigits(trimmed).replace(/\d/g, ""));
+  return { nameQuery, phoneDigits };
+}
+function buildCustomerSearchOr(search) {
+  const { nameQuery, phoneDigits } = splitSearchQuery(search);
+  const or = [];
+  if (nameQuery) or.push({ fullName: { contains: nameQuery } });
+  if (phoneDigits) or.push({ phone: { contains: phoneDigits } });
+  return or;
+}
 function serializeDate(date) {
   return date.toISOString();
 }
@@ -321,12 +337,10 @@ function registerIpcHandlers() {
       } = params;
       const andConditions = [];
       if (search) {
-        andConditions.push({
-          OR: [
-            { phone: { contains: parseAsciiDigits(search) } },
-            { fullName: { contains: search } }
-          ]
-        });
+        const searchOr = buildCustomerSearchOr(search);
+        if (searchOr.length > 0) {
+          andConditions.push({ OR: searchOr });
+        }
       }
       if (vipOnly) {
         andConditions.push({
@@ -510,12 +524,10 @@ function registerIpcHandlers() {
         };
       }
       if (search) {
-        where.customer = {
-          OR: [
-            { phone: { contains: parseAsciiDigits(search) } },
-            { fullName: { contains: search } }
-          ]
-        };
+        const searchOr = buildCustomerSearchOr(search);
+        if (searchOr.length > 0) {
+          where.customer = { OR: searchOr };
+        }
       }
       const [total, transactions] = await Promise.all([
         db.transaction.count({ where }),

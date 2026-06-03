@@ -50,6 +50,18 @@ export function normalizePhone(phone: string): string {
   return digits.slice(0, 11)
 }
 
+/** Unify common Persian/Arabic letter variants for search & display. */
+export function normalizePersianText(value: string): string {
+  return normalizeDigits(value)
+    .replace(/\u064A/g, '\u06CC') // Arabic yeh → Persian yeh
+    .replace(/\u0643/g, '\u06A9') // Arabic kaf → Persian kaf
+    .replace(/\u0629/g, '\u0647') // tā marbuta → heh
+    .replace(/\u200C/g, '') // ZWNJ
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+}
+
 /** Use while typing in phone fields (same rules as normalizePhone). */
 export function sanitizePhoneInput(value: string): string {
   return normalizePhone(value)

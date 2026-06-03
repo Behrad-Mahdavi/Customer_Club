@@ -3,7 +3,8 @@ import { getPrisma, getDbPath } from './prisma'
 import fs from 'node:fs'
 import path from 'node:path'
 import { settleOrder } from '../../src/lib/order'
-import { normalizePin, normalizePhone, parseAsciiDigits } from '../../src/lib/normalize'
+import { normalizePin, normalizePhone } from '../../src/lib/normalize'
+import { buildCustomerSearchOr } from '../../src/lib/search'
 import type {
   Customer,
   CustomerListParams,
@@ -208,12 +209,10 @@ export function registerIpcHandlers(): void {
       const andConditions: Record<string, unknown>[] = []
 
       if (search) {
-        andConditions.push({
-          OR: [
-            { phone: { contains: parseAsciiDigits(search) } },
-            { fullName: { contains: search } },
-          ],
-        })
+        const searchOr = buildCustomerSearchOr(search)
+        if (searchOr.length > 0) {
+          andConditions.push({ OR: searchOr })
+        }
       }
 
       if (vipOnly) {
@@ -434,11 +433,9 @@ export function registerIpcHandlers(): void {
       }
 
       if (search) {
-        where.customer = {
-          OR: [
-            { phone: { contains: parseAsciiDigits(search) } },
-            { fullName: { contains: search } },
-          ],
+        const searchOr = buildCustomerSearchOr(search)
+        if (searchOr.length > 0) {
+          where.customer = { OR: searchOr }
         }
       }
 

@@ -267,6 +267,24 @@ body {
   max-width: 360px;
 }
 
+/* Carbon Search: LTR shell for icon, RTL text for Persian names */
+.cds--search {
+  direction: ltr;
+  width: 100%;
+}
+
+.cds--search .cds--search-input,
+.cds--search-input {
+  direction: rtl;
+  text-align: right;
+  unicode-bidi: plaintext;
+}
+
+.page > .cds--search {
+  max-width: 360px;
+  margin-block-end: 1.5rem;
+}
+
 .filters-row .cds--select,
 .filters-row .cds--text-input,
 .filters-row .cds--toggle {
