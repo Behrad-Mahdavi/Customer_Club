@@ -1,0 +1,52 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Customer {
+  id              String        @id @default(cuid())
+  fullName        String        @default("")
+  phone           String        @unique
+  cashbackBalance Float         @default(0)
+  totalSpent      Float         @default(0)
+  totalOrders     Int           @default(0)
+  lastPurchaseAt  DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  transactions    Transaction[]
+}
+
+model Transaction {
+  id             String   @id @default(cuid())
+  customerId     String
+  customer       Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  amount         Float
+  cashbackEarned Float    @default(0)
+  cashbackUsed   Float    @default(0)
+  finalAmount    Float
+  createdAt      DateTime @default(now())
+
+  @@index([customerId])
+  @@index([createdAt])
+}
+
+model CashbackRule {
+  id            String  @id @default(cuid())
+  percentage    Float   @default(5)
+  minimumAmount Float   @default(0)
+  maximumAmount Float   @default(0)
+  isActive      Boolean @default(true)
+}
+
+model Settings {
+  id                   String  @id @default("default")
+  businessName         String  @default("باشگاه مشتریان")
+  branchName           String  @default("شعبه اصلی")
+  vipOrderThreshold    Int     @default(10)
+  vipSpendingThreshold Float   @default(5000000)
+  authPin              String  @default("1234")
+}
