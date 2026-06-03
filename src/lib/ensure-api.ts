@@ -2,6 +2,7 @@ import type {
   CashbackRule,
   ChartDataPoint,
   CreateTransactionInput,
+  CreateTransactionResult,
   Customer,
   CustomerListParams,
   CustomerProfile,
@@ -15,6 +16,7 @@ import type {
   VipCustomer,
 } from '../types/api'
 import { normalizePin, normalizePhone, parseAsciiDigits } from './normalize'
+import { settleOrder } from './order'
 
 const KEYS = {
   settings: 'cc_settings',
@@ -293,10 +295,9 @@ export function createDevApi(): ElectronAPI {
     },
 
     transactions: {
-      async create(input: CreateTransactionInput) {
+      async create(input: CreateTransactionInput): Promise<CreateTransactionResult> {
         const normalized = normalizePhone(input.phone)
         if (normalized.length < 10) throw new Error('شماره موبایل نامعتبر است')
-        if (input.amount <= 0) throw new Error('مبلغ فاکتور باید بیشتر از صفر باشد')
 
         const rule = getCashbackRule()
         const settings = getSettings()
@@ -319,15 +320,16 @@ export function createDevApi(): ElectronAPI {
           customer.fullName = input.fullName.trim()
         }
 
-        const cashbackUsed = Math.min(input.cashbackUsed ?? 0, customer.cashbackBalance, input.amount)
-        let cashbackEarned = 0
-        if (rule.isActive && input.amount >= rule.minimumAmount) {
-          cashbackEarned = (input.amount * rule.percentage) / 100
-          if (rule.maximumAmount > 0) cashbackEarned = Math.min(cashbackEarned, rule.maximumAmount)
-        }
+        const settlement = settleOrder({
+          orderTotal: input.amount,
+          discountAmount: input.discountAmount,
+          cashbackUsedRequested: input.cashbackUsed ?? 0,
+          cashbackBalance: customer.cashbackBalance,
+          rule,
+        })
 
-        customer.cashbackBalance = customer.cashbackBalance - cashbackUsed + cashbackEarned
-        customer.totalSpent += input.amount
+        customer.cashbackBalance = settlement.remainingCashbackBalance
+        customer.totalSpent += settlement.orderTotal
         customer.totalOrders += 1
         customer.updatedAt = new Date().toISOString()
         customer.lastPurchaseAt = new Date().toISOString()
@@ -336,10 +338,10 @@ export function createDevApi(): ElectronAPI {
         const transaction: Transaction = {
           id: uid(),
           customerId: customer.id,
-          amount: input.amount,
-          cashbackEarned,
-          cashbackUsed,
-          finalAmount: input.amount - cashbackUsed,
+          amount: settlement.orderTotal,
+          cashbackEarned: settlement.cashbackEarned,
+          cashbackUsed: settlement.cashbackUsed,
+          finalAmount: settlement.payableAmount,
           createdAt: new Date().toISOString(),
         }
 
@@ -350,6 +352,12 @@ export function createDevApi(): ElectronAPI {
         return {
           customer: { ...customer, isVip: isVip(customer, settings) },
           transaction,
+          orderTotal: settlement.orderTotal,
+          discountAmount: settlement.discountAmount,
+          cashbackUsed: settlement.cashbackUsed,
+          payableAmount: settlement.payableAmount,
+          cashbackEarned: settlement.cashbackEarned,
+          remainingCashbackBalance: settlement.remainingCashbackBalance,
         }
       },
 

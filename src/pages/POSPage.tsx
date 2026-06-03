@@ -4,7 +4,7 @@ import { TextInput, Button, Tag, SkeletonText, SkeletonPlaceholder } from '@carb
 import { CheckmarkFilled, UserFollow, ArrowLeft } from '@carbon/icons-react'
 import { toast } from 'sonner'
 import type { CashbackRule, Customer } from '../types/api'
-import { calculateCashback } from '../lib/cashback'
+import { settleOrder, previewOrderSettlement } from '../lib/order'
 import {
   formatCurrency,
   formatNumber,
@@ -17,6 +17,14 @@ import { MoneyInput } from '../components/MoneyInput'
 import { usePosHotkeys } from '../hooks/usePosHotkeys'
 
 type Step = 'phone' | 'purchase' | 'success'
+
+interface SuccessSummary {
+  orderTotal: number
+  payableAmount: number
+  cashbackUsed: number
+  earned: number
+  remainingBalance: number
+}
 
 export function POSPage() {
   const navigate = useNavigate()
@@ -35,7 +43,8 @@ export function POSPage() {
   const [lookupLoading, setLookupLoading] = useState(false)
   const [registerLoading, setRegisterLoading] = useState(false)
   const [step, setStep] = useState<Step>('phone')
-  const [lastResult, setLastResult] = useState<{ amount: number; earned: number } | null>(null)
+  const [lastResult, setLastResult] = useState<SuccessSummary | null>(null)
+  const [previewError, setPreviewError] = useState<string | null>(null)
 
   const reset = useCallback(() => {
     setPhone('')
@@ -46,6 +55,7 @@ export function POSPage() {
     setIsNew(false)
     setStep('phone')
     setLastResult(null)
+    setPreviewError(null)
     setTimeout(() => phoneRef.current?.focus(), 50)
   }, [])
 
@@ -86,6 +96,7 @@ export function POSPage() {
     if (step === 'purchase') {
       setAmountStr('')
       setCashbackUsedStr('')
+      setPreviewError(null)
       setTimeout(() => amountRef.current?.focus(), 50)
     } else {
       reset()
@@ -104,11 +115,43 @@ export function POSPage() {
 
   const amount = Number(amountStr) || 0
   const cashbackUsed = Number(cashbackUsedStr) || 0
+  const cashbackBalance = customer?.cashbackBalance ?? 0
 
-  const earnedPreview = useMemo(() => {
-    if (!cashbackRule || amount <= 0) return 0
-    return calculateCashback(amount, cashbackRule)
-  }, [amount, cashbackRule])
+  const settlementPreview = useMemo(() => {
+    if (!cashbackRule || amount <= 0) {
+      return null
+    }
+    return previewOrderSettlement({
+      orderTotal: amount,
+      cashbackUsedRequested: cashbackUsed,
+      cashbackBalance: isNew ? 0 : cashbackBalance,
+      rule: cashbackRule,
+    })
+  }, [amount, cashbackUsed, cashbackBalance, cashbackRule, isNew])
+
+  useEffect(() => {
+    if (amount <= 0 || !customer || isNew) {
+      setPreviewError(null)
+      return
+    }
+    if (cashbackUsed <= 0) {
+      setPreviewError(null)
+      return
+    }
+    try {
+      settleOrder({
+        orderTotal: amount,
+        cashbackUsedRequested: cashbackUsed,
+        cashbackBalance,
+        rule: cashbackRule!,
+      })
+      setPreviewError(null)
+    } catch (err) {
+      setPreviewError(err instanceof Error ? err.message : 'مبلغ کش‌بک نامعتبر است')
+    }
+  }, [amount, cashbackUsed, cashbackBalance, customer, isNew, cashbackRule])
+
+  const maxCashbackUsable = Math.max(0, Math.min(cashbackBalance, amount))
 
   const handlePhoneSubmit = async () => {
     const normalized = normalizePhone(phone)
@@ -149,16 +192,37 @@ export function POSPage() {
       return
     }
 
+    if (!isNew && cashbackUsed > 0) {
+      try {
+        settleOrder({
+          orderTotal: amount,
+          cashbackUsedRequested: cashbackUsed,
+          cashbackBalance,
+          rule: cashbackRule!,
+        })
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'مبلغ کش‌بک نامعتبر است')
+        return
+      }
+    }
+
     setRegisterLoading(true)
     try {
       const result = await window.api.transactions.create({
         phone: normalizePhone(phone),
         fullName: isNew ? fullName : undefined,
         amount,
-        cashbackUsed: cashbackUsed || 0,
+        cashbackUsed: isNew ? 0 : cashbackUsed,
       })
 
-      setLastResult({ amount, earned: result.transaction.cashbackEarned })
+      setCustomer(result.customer)
+      setLastResult({
+        orderTotal: result.orderTotal,
+        payableAmount: result.payableAmount,
+        cashbackUsed: result.cashbackUsed,
+        earned: result.cashbackEarned,
+        remainingBalance: result.remainingCashbackBalance,
+      })
       setStep('success')
       toast.success('خرید ثبت شد')
     } catch (err) {
@@ -296,25 +360,35 @@ export function POSPage() {
                 className="pos-amount-input"
               />
 
-              {customer && customer.cashbackBalance > 0 && (
+              {customer && !isNew && customer.cashbackBalance > 0 && (
                 <MoneyInput
                   id="pos-cashback-used"
-                  labelText="مصرف کش‌بک"
+                  labelText={`مصرف کش‌بک (حداکثر ${formatCurrency(maxCashbackUsable)})`}
                   value={cashbackUsedStr}
                   onChange={(e) => setCashbackUsedStr(e.target.value)}
                   onKeyDown={(e) => onEnter(e, handleRegister)}
                   size="lg"
                   inputMode="numeric"
                   placeholder="0"
+                  invalid={!!previewError}
+                  invalidText={previewError ?? undefined}
                 />
               )}
 
-              {amount > 0 && (
-                <div className="pos-earned-live">
-                  <span>کش‌بک این خرید</span>
-                  <strong className="cashback">
-                    <Numeric>{formatCurrency(earnedPreview)}</Numeric>
-                  </strong>
+              {settlementPreview && (
+                <div className="pos-settlement-preview">
+                  {cashbackUsed > 0 && (
+                    <div className="pos-settlement-row">
+                      <span>مبلغ قابل پرداخت</span>
+                      <strong><Numeric>{formatCurrency(settlementPreview.payableAmount)}</Numeric></strong>
+                    </div>
+                  )}
+                  <div className="pos-earned-live">
+                    <span>کش‌بک این خرید</span>
+                    <strong className="cashback">
+                      <Numeric>{formatCurrency(settlementPreview.cashbackEarned)}</Numeric>
+                    </strong>
+                  </div>
                 </div>
               )}
 
@@ -323,7 +397,7 @@ export function POSPage() {
                 size="lg"
                 className="pos-register-btn"
                 onClick={handleRegister}
-                disabled={registerLoading || (isNew && !fullName.trim())}
+                disabled={registerLoading || (isNew && !fullName.trim()) || !!previewError}
               >
                 {registerLoading ? 'در حال ثبت...' : 'ثبت خرید'}
               </Button>
@@ -337,12 +411,26 @@ export function POSPage() {
             <h2>خرید ثبت شد</h2>
             <dl className="pos-success-dl">
               <div>
-                <dt>مبلغ</dt>
-                <dd><Numeric>{formatCurrency(lastResult.amount)}</Numeric></dd>
+                <dt>مبلغ سفارش</dt>
+                <dd><Numeric>{formatCurrency(lastResult.orderTotal)}</Numeric></dd>
+              </div>
+              {lastResult.cashbackUsed > 0 && (
+                <div>
+                  <dt>کش‌بک مصرف‌شده</dt>
+                  <dd><Numeric>{formatCurrency(lastResult.cashbackUsed)}</Numeric></dd>
+                </div>
+              )}
+              <div>
+                <dt>مبلغ پرداختی</dt>
+                <dd><Numeric>{formatCurrency(lastResult.payableAmount)}</Numeric></dd>
               </div>
               <div>
-                <dt>کش‌بک</dt>
+                <dt>کش‌بک جدید</dt>
                 <dd className="cashback"><Numeric>{formatCurrency(lastResult.earned)}</Numeric></dd>
+              </div>
+              <div>
+                <dt>موجودی کش‌بک</dt>
+                <dd className="cashback"><Numeric>{formatCurrency(lastResult.remainingBalance)}</Numeric></dd>
               </div>
             </dl>
             <p className="pos-hint">بازگشت خودکار به صفحه شناسایی...</p>

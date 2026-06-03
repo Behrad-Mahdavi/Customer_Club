@@ -633,6 +633,23 @@ code {
   text-align: end;
 }
 
+.pos-settlement-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.pos-settlement-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  background: var(--cds-layer-accent);
+  border: 1px solid var(--cds-border-subtle);
+  border-radius: 4px;
+  gap: 1rem;
+}
+
 .pos-earned-live {
   background: var(--cds-layer-accent);
   border: 1px solid var(--cds-support-success);

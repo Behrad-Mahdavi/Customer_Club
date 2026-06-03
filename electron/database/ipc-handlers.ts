@@ -2,12 +2,14 @@ import { ipcMain } from 'electron'
 import { getPrisma, getDbPath } from './prisma'
 import fs from 'node:fs'
 import path from 'node:path'
+import { settleOrder } from '../../src/lib/order'
 import { normalizePin, normalizePhone, parseAsciiDigits } from '../../src/lib/normalize'
 import type {
   Customer,
   CustomerListParams,
   CustomerProfile,
   CreateTransactionInput,
+  CreateTransactionResult,
   DashboardStats,
   PaginatedResult,
   Settings,
@@ -329,79 +331,65 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     'transactions:create',
-    async (_event, input: CreateTransactionInput) => {
+    async (_event, input: CreateTransactionInput): Promise<CreateTransactionResult> => {
       const db = getPrisma()
       const normalizedPhone = normalizePhone(input.phone)
 
       if (!normalizedPhone || normalizedPhone.length < 10) {
         throw new Error('شماره موبایل نامعتبر است')
       }
-      if (input.amount <= 0) {
-        throw new Error('مبلغ فاکتور باید بیشتر از صفر باشد')
-      }
 
       const rule = await db.cashbackRule.findFirst({ where: { isActive: true } })
       if (!rule) throw new Error('قانون کش‌بک فعال یافت نشد')
 
-      let customer = await db.customer.findUnique({ where: { phone: normalizedPhone } })
-
-      if (!customer) {
-        customer = await db.customer.create({
-          data: {
-            phone: normalizedPhone,
-            fullName: input.fullName?.trim() || '',
-          },
-        })
-      } else if (input.fullName?.trim() && !customer.fullName) {
-        customer = await db.customer.update({
-          where: { id: customer.id },
-          data: { fullName: input.fullName.trim() },
-        })
-      }
-
-      const cashbackUsed = Math.min(
-        input.cashbackUsed ?? 0,
-        customer.cashbackBalance,
-        input.amount,
-      )
-
-      if (cashbackUsed < 0) {
-        throw new Error('مبلغ کش‌بک مصرفی نامعتبر است')
-      }
-
-      let cashbackEarned = 0
-      if (rule.isActive && input.amount >= rule.minimumAmount) {
-        cashbackEarned = (input.amount * rule.percentage) / 100
-        if (rule.maximumAmount > 0) {
-          cashbackEarned = Math.min(cashbackEarned, rule.maximumAmount)
-        }
-      }
-
-      const finalAmount = input.amount - cashbackUsed
-      const newBalance = customer.cashbackBalance - cashbackUsed + cashbackEarned
-
       const result = await db.$transaction(async (tx) => {
+        let customer = await tx.customer.findUnique({ where: { phone: normalizedPhone } })
+
+        if (!customer) {
+          customer = await tx.customer.create({
+            data: {
+              phone: normalizedPhone,
+              fullName: input.fullName?.trim() || '',
+            },
+          })
+        } else if (input.fullName?.trim() && !customer.fullName) {
+          customer = await tx.customer.update({
+            where: { id: customer.id },
+            data: { fullName: input.fullName.trim() },
+          })
+        }
+
+        const locked = await tx.customer.findUniqueOrThrow({ where: { id: customer.id } })
+
+        const settlement = settleOrder({
+          orderTotal: input.amount,
+          discountAmount: input.discountAmount,
+          cashbackUsedRequested: input.cashbackUsed ?? 0,
+          cashbackBalance: locked.cashbackBalance,
+          rule,
+        })
+
         const transaction = await tx.transaction.create({
           data: {
-            customerId: customer!.id,
-            amount: input.amount,
-            cashbackEarned,
-            cashbackUsed,
-            finalAmount,
+            customerId: locked.id,
+            amount: settlement.orderTotal,
+            cashbackEarned: settlement.cashbackEarned,
+            cashbackUsed: settlement.cashbackUsed,
+            finalAmount: settlement.payableAmount,
           },
         })
 
         const updatedCustomer = await tx.customer.update({
-          where: { id: customer!.id },
+          where: { id: locked.id },
           data: {
-            cashbackBalance: newBalance,
-            totalSpent: { increment: input.amount },
+            cashbackBalance: settlement.remainingCashbackBalance,
+            totalSpent: { increment: settlement.orderTotal },
             totalOrders: { increment: 1 },
             lastPurchaseAt: new Date(),
           },
         })
 
-        return { transaction, updatedCustomer }
+        return { transaction, updatedCustomer, settlement }
       })
 
       const settings = await getSettings()
@@ -409,6 +397,12 @@ export function registerIpcHandlers(): void {
       return {
         customer: toCustomer(result.updatedCustomer, isVip(result.updatedCustomer, settings)),
         transaction: toTransaction(result.transaction),
+        orderTotal: result.settlement.orderTotal,
+        discountAmount: result.settlement.discountAmount,
+        cashbackUsed: result.settlement.cashbackUsed,
+        payableAmount: result.settlement.payableAmount,
+        cashbackEarned: result.settlement.cashbackEarned,
+        remainingCashbackBalance: result.settlement.remainingCashbackBalance,
       }
     },
   )

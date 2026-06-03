@@ -74,7 +74,19 @@ export interface CreateTransactionInput {
   phone: string
   fullName?: string
   amount: number
+  discountAmount?: number
   cashbackUsed?: number
+}
+
+export interface CreateTransactionResult {
+  customer: Customer
+  transaction: Transaction
+  orderTotal: number
+  discountAmount: number
+  cashbackUsed: number
+  payableAmount: number
+  cashbackEarned: number
+  remainingCashbackBalance: number
 }
 
 export interface UpdateCustomerInput {
@@ -124,7 +136,7 @@ export interface ElectronAPI {
     exportCsv: () => Promise<string>
   }
   transactions: {
-    create: (data: CreateTransactionInput) => Promise<{ customer: Customer; transaction: Transaction }>
+    create: (data: CreateTransactionInput) => Promise<CreateTransactionResult>
     list: (params?: TransactionListParams) => Promise<PaginatedResult<Transaction>>
     exportCsv: () => Promise<string>
   }
